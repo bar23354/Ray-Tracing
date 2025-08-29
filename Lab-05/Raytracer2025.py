@@ -4,6 +4,8 @@ from math import pi, tan
 from camera import Camera
 from figures import Sphere, Material
 from BMP_Writer import GenerateBMP
+from figures import *
+from lights import *
 
 class Raytracer:
     def __init__(self, width=800, height=600):
@@ -86,6 +88,8 @@ class Raytracer:
         pygame.display.set_caption("Ray Tracer 2025")
         clock = pygame.time.Clock()
         running = True
+        self.lights = getattr(self, 'lights', [])
+        self.lights.append(DirectionalLight(direction = [-1,-1,-1]))
         
         print("Renderizando en tiempo real... Presiona ESC para salir")
         

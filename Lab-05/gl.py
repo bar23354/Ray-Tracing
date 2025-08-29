@@ -3,6 +3,8 @@ from math import isclose, floor, ceil, tan, pi
 from camera import Camera
 import random
 import pygame
+from figures import *
+from lights import *
 
 class Renderer:
     def __init__(self, screen):
@@ -19,6 +21,7 @@ class Renderer:
         self.glClear()
 
         self.scene = []
+        self.lights = []
 
     def glClear(self):
         color = [int(i * 255) for i in self.clearColor]
