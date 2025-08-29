@@ -36,6 +36,13 @@ class Raytracer:
                 
         return hit
     
+    def cast_shadow_ray(self, origin, direction, max_distance):
+        for obj in self.scene:
+            intersect = obj.ray_intersect(origin, direction)
+            if intersect and 0.001 < intersect['distance'] < max_distance:
+                return True
+        return False
+    
     def phong_lighting(self, hit, ray_direction):
         material = hit['material']
         point = hit['point']
@@ -51,27 +58,33 @@ class Raytracer:
                 light_dir = np.array([-x for x in light.direction])
                 light_dir = light_dir / np.linalg.norm(light_dir)
                 
-                diffuse_intensity = max(0, np.dot(normal, light_dir))
+                shadow_origin = point + normal * 0.001
+                in_shadow = self.cast_shadow_ray(shadow_origin, light_dir, float('inf'))
                 
-                for i in range(3):
-                    final_color[i] += (diffuse_intensity * 
-                                     material.diffuse[i] * 
-                                     light.color[i] * 
-                                     light.intensity)
-                
-                if material.ks > 0:
-                    view_dir = np.array([-x for x in ray_direction])
-                    view_dir = view_dir / np.linalg.norm(view_dir)
-                    
-                    reflect_dir = 2 * np.dot(normal, light_dir) * normal - light_dir
-                    
-                    spec_intensity = max(0, np.dot(view_dir, reflect_dir)) ** material.spec
+                if not in_shadow:
+                    diffuse_intensity = max(0, np.dot(normal, light_dir))
                     
                     for i in range(3):
-                        final_color[i] += (material.ks * 
-                                         spec_intensity * 
+                        final_color[i] += (diffuse_intensity * 
+                                         material.diffuse[i] * 
                                          light.color[i] * 
                                          light.intensity)
+                    
+                    if material.ks > 0 and diffuse_intensity > 0:
+                        view_dir = np.array([-x for x in ray_direction])
+                        view_dir = view_dir / np.linalg.norm(view_dir)
+                        
+                        reflect_dir = 2 * np.dot(normal, light_dir) * normal - light_dir
+                        reflect_dir = reflect_dir / np.linalg.norm(reflect_dir)
+                        
+                        spec_intensity = max(0, np.dot(view_dir, reflect_dir)) ** material.spec
+                        
+                        specular_color = [1.0, 1.0, 1.0]
+                        for i in range(3):
+                            final_color[i] += (material.ks * 
+                                             spec_intensity * 
+                                             specular_color[i] * 
+                                             light.intensity)
         
         return [min(1, max(0, c)) for c in final_color]
     
@@ -199,16 +212,19 @@ if __name__ == "__main__":
     
     raytracer.glClearColor(0.1, 0.3, 0.5)
     
-    carbonMaterial = Material(diffuse=[0.15, 0.15, 0.15], spec=8, ks=0.1)
-    mickeyRedMaterial = Material(diffuse=[0.8, 0.1, 0.1], spec=32, ks=0.4)
-    shoeYellowMaterial = Material(diffuse=[1.0, 0.9, 0.2], spec=64, ks=0.6)
+    carbonMaterial = Material(diffuse=[0.15, 0.15, 0.15], spec=8, ks=0.2)
+    mickeyRedMaterial = Material(diffuse=[0.8, 0.1, 0.1], spec=64, ks=0.6)
+    shoeYellowMaterial = Material(diffuse=[1.0, 0.9, 0.2], spec=128, ks=0.8)
     
     mmHead = Sphere([0, 0, -4], 1.0, carbonMaterial)
     mmLeftEar = Sphere([-0.7, 0.7, -3.8], 0.5, mickeyRedMaterial)
     mmRightEar = Sphere([0.7, 0.7, -3.8], 0.5, shoeYellowMaterial)
 
     raytracer.scene = [mmHead, mmLeftEar, mmRightEar]
-    raytracer.lights = [DirectionalLight(color=[1, 1, 1], intensity=1.2, direction=[-1, -1, -1])]
+    raytracer.lights = [
+        DirectionalLight(color=[1, 1, 1], intensity=1.0, direction=[-1, -1, -1]),
+        DirectionalLight(color=[0.6, 0.6, 0.8], intensity=0.3, direction=[1, 0.5, -0.5])
+    ]
     
     raytracer.render_pygame()
     
