@@ -13,8 +13,10 @@ class Raytracer:
         self.height = height
         self.camera = Camera()
         self.scene = []
+        self.lights = []
         self.clear_color = [0, 0, 0]
         self.current_color = [1, 1, 1]
+        self.ambient_light = [0.1, 0.1, 0.1]
         
     def glClearColor(self, r, g, b):
         self.clear_color = [r, g, b]
@@ -34,7 +36,46 @@ class Raytracer:
                 
         return hit
     
-    def render_to_bmp(self, filename="raytraced_output.bmp"):
+    def phong_lighting(self, hit, ray_direction):
+        material = hit['material']
+        point = hit['point']
+        normal = hit['normal']
+        
+        final_color = [0, 0, 0]
+        
+        for i in range(3):
+            final_color[i] += self.ambient_light[i] * material.diffuse[i]
+        
+        for light in self.lights:
+            if light.lightType == "Directional":
+                light_dir = np.array([-x for x in light.direction])
+                light_dir = light_dir / np.linalg.norm(light_dir)
+                
+                diffuse_intensity = max(0, np.dot(normal, light_dir))
+                
+                for i in range(3):
+                    final_color[i] += (diffuse_intensity * 
+                                     material.diffuse[i] * 
+                                     light.color[i] * 
+                                     light.intensity)
+                
+                if material.ks > 0:
+                    view_dir = np.array([-x for x in ray_direction])
+                    view_dir = view_dir / np.linalg.norm(view_dir)
+                    
+                    reflect_dir = 2 * np.dot(normal, light_dir) * normal - light_dir
+                    
+                    spec_intensity = max(0, np.dot(view_dir, reflect_dir)) ** material.spec
+                    
+                    for i in range(3):
+                        final_color[i] += (material.ks * 
+                                         spec_intensity * 
+                                         light.color[i] * 
+                                         light.intensity)
+        
+        return [min(1, max(0, c)) for c in final_color]
+    
+    def render_to_bmp(self, filename="raytraced.bmp"):
         framebuffer = []
         
         print(f"Renderizando imagen {self.width}x{self.height}...")
@@ -51,7 +92,7 @@ class Raytracer:
                 hit = self.cast_ray(self.camera.translation, direction)
                 
                 if hit:
-                    color = hit['material'].diffuse
+                    color = self.phong_lighting(hit, direction)
                     pixel = (
                         int(color[0] * 255),
                         int(color[1] * 255),
@@ -88,10 +129,11 @@ class Raytracer:
         pygame.display.set_caption("Ray Tracer 2025")
         clock = pygame.time.Clock()
         running = True
-        self.lights = getattr(self, 'lights', [])
-        self.lights.append(DirectionalLight(direction = [-1,-1,-1]))
         
-        print("Renderizando en tiempo real... Presiona ESC para salir")
+        if not hasattr(self, 'lights') or not self.lights:
+            self.lights = [DirectionalLight(direction=[-1, -1, -1])]
+        
+        print("Woah, woah, renderizando... Presiona ESC para salir")
         
         rendered_pixels = 0
         total_pixels = self.width * self.height
@@ -121,7 +163,7 @@ class Raytracer:
                 hit = self.cast_ray(self.camera.translation, direction)
                 
                 if hit:
-                    color = hit['material'].diffuse
+                    color = self.phong_lighting(hit, direction)
                     pixel_color = (
                         int(color[0] * 255),
                         int(color[1] * 255),
@@ -153,18 +195,22 @@ class Raytracer:
         pygame.quit()
 
 if __name__ == "__main__":
-    raytracer = Raytracer(400, 400)
+    raytracer = Raytracer(600, 600)
     
-    raytracer.glClearColor(0.2, 0.2, 0.3)
+    raytracer.glClearColor(0.1, 0.3, 0.5)
     
-    red_material = Material(diffuse=[0.8, 0.2, 0.2])
-    green_material = Material(diffuse=[0.2, 0.8, 0.2])
-    blue_material = Material(diffuse=[0.2, 0.2, 0.8])
+    carbonMaterial = Material(diffuse=[0.15, 0.15, 0.15], spec=8, ks=0.1)
+    mickeyRedMaterial = Material(diffuse=[0.8, 0.1, 0.1], spec=32, ks=0.4)
+    shoeYellowMaterial = Material(diffuse=[1.0, 0.9, 0.2], spec=64, ks=0.6)
     
-    sphere1 = Sphere([0, 0, -3], 0.6, red_material)
-    sphere2 = Sphere([-1.2, 0, -4], 0.4, green_material)
-    sphere3 = Sphere([1.2, 0, -4], 0.4, blue_material)
-    
-    raytracer.scene = [sphere1, sphere2, sphere3]
+    mmHead = Sphere([0, 0, -4], 1.0, carbonMaterial)
+    mmLeftEar = Sphere([-0.7, 0.7, -3.8], 0.5, mickeyRedMaterial)
+    mmRightEar = Sphere([0.7, 0.7, -3.8], 0.5, shoeYellowMaterial)
+
+    raytracer.scene = [mmHead, mmLeftEar, mmRightEar]
+    raytracer.lights = [DirectionalLight(color=[1, 1, 1], intensity=1.2, direction=[-1, -1, -1])]
     
     raytracer.render_pygame()
+    
+    print("\nBMP...")
+    raytracer.render_to_bmp("MouseAlwaysWins.bmp")
