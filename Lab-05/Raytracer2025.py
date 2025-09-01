@@ -219,8 +219,20 @@ if __name__ == "__main__":
     mmHead = Sphere([0, 0, -4], 1.0, carbonMaterial)
     mmLeftEar = Sphere([-0.7, 0.7, -3.8], 0.5, mickeyRedMaterial)
     mmRightEar = Sphere([0.7, 0.7, -3.8], 0.5, shoeYellowMaterial)
+    
+    mmLeftEye = Sphere([-0.3, 0.2, -3.2], 0.15, mickeyRedMaterial)
+    mmRightEye = Sphere([0.3, 0.2, -3.2], 0.15, shoeYellowMaterial)
+    
+    mmSmile1 = Sphere([-0.3, -0.3, -3.2], 0.1, shoeYellowMaterial)
+    mmSmile2 = Sphere([-0.15, -0.4, -3.15], 0.08, mickeyRedMaterial)
+    mmSmile3 = Sphere([0, -0.45, -3.1], 0.08, shoeYellowMaterial)
+    mmSmile4 = Sphere([0.15, -0.4, -3.15], 0.08, mickeyRedMaterial)
+    mmSmile5 = Sphere([0.3, -0.3, -3.2], 0.1, shoeYellowMaterial)
+    
+    mmNose = Sphere([0, -0.1, -3.1], 0.06, mickeyRedMaterial)
 
-    raytracer.scene = [mmHead, mmLeftEar, mmRightEar]
+    raytracer.scene = [mmHead, mmLeftEar, mmRightEar, mmLeftEye, mmRightEye, 
+                      mmSmile1, mmSmile2, mmSmile3, mmSmile4, mmSmile5, mmNose]
     raytracer.lights = [
         DirectionalLight(color=[1, 1, 1], intensity=1.0, direction=[-1, -1, -1]),
         DirectionalLight(color=[0.6, 0.6, 0.8], intensity=0.3, direction=[1, 0.5, -0.5])
