@@ -47,7 +47,8 @@ class Sphere(Shape):
             return None
             
         point = ray_origin + ray_direction * t0
-        normal = (point - self.center) / np.linalg.norm(point - self.center)
+        normal = (point - self.center)
+        normal = normal / np.linalg.norm(normal)
         
         return {
             'distance': t0,

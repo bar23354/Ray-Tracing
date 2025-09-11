@@ -26,6 +26,8 @@ class Model:
                     
         return intersect
 
+#Para otro momento
+'''
     def triangle_intersect(self, ray_origin, ray_direction, v0, v1, v2):
         epsilon = 1e-8
         
@@ -65,3 +67,4 @@ class Model:
             }
             
         return None
+'''

@@ -1,35 +1,49 @@
 import numpy as np
 
+EPS = 1e-4
+
+def normalize(v):
+    v = np.array(v, dtype=np.float64)
+    n = np.linalg.norm(v)
+    return v / n if n > 0 else v
+
 def reflect(incident, normal):
-    return incident - 2 * np.dot(incident, normal) * normal
+    i = normalize(incident)
+    n = normalize(normal)
+    return i - 2.0 * np.dot(i, n) * n
 
 def refract(incident, normal, n1, n2):
+    i = normalize(incident)
+    n = normalize(normal)
     eta = n1 / n2
-    dot_i = np.dot(incident, normal)
-    
-    k = 1 - eta**2 * (1 - dot_i**2)
+    cosi = np.dot(i, n)
+    k = 1.0 - eta**2 * (1.0 - cosi**2)
     if k < 0:
         return None
-    
-    return eta * incident - (eta * dot_i + np.sqrt(k)) * normal
+    return eta * i - (eta * cosi + np.sqrt(k)) * n
 
 def fresnel(incident, normal, n1, n2):
-    cos_i = abs(np.dot(incident, normal))
-    
-    if n1 > n2:
-        eta = n1 / n2
-        sin_t_sq = eta**2 * (1 - cos_i**2)
-        if sin_t_sq > 1:
-            return 1.0
-        cos_t = np.sqrt(1 - sin_t_sq)
+    i = normalize(incident)
+    n = normalize(normal)
+    cosi = np.clip(np.dot(i, n), -1.0, 1.0)
+
+    if cosi > 0:
+        n1, n2 = n2, n1
+        cosi = abs(cosi)
+        n = -n
     else:
-        eta = n1 / n2
-        cos_t = np.sqrt(1 - eta**2 * (1 - cos_i**2))
-    
-    r_parallel = ((n2 * cos_i - n1 * cos_t) / (n2 * cos_i + n1 * cos_t))**2
-    r_perpendicular = ((n1 * cos_i - n2 * cos_t) / (n1 * cos_i + n2 * cos_t))**2
-    
-    return (r_parallel + r_perpendicular) / 2
+        cosi = abs(cosi)
+
+    eta = n1 / n2
+    sin_t_sq = eta**2 * (1 - cosi**2)
+    if sin_t_sq > 1:
+        return 1.0
+    cos_t = np.sqrt(1 - sin_t_sq)
+
+    r_s = ((n1 * cosi - n2 * cos_t) / (n1 * cosi + n2 * cos_t))**2
+    r_p = ((n2 * cosi - n1 * cos_t) / (n2 * cosi + n1 * cos_t))**2
+
+    return np.clip((r_s + r_p) * 0.5, 0.0, 1.0)
 
 def cast_ray_with_reflections(self, origin, direction, recursion=0):
     if recursion >= self.max_recursions:

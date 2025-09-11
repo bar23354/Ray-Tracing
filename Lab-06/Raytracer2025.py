@@ -1,12 +1,80 @@
 import pygame
 import numpy as np
-from math import pi, tan
+from math import pi, tan, atan2, asin, sqrt, acos
 from camera import Camera
 from figures import Sphere, Material
 from BMP_Writer import GenerateBMP
 from figures import *
 from lights import *
-from refectoredFunctions import reflect, refract, fresnel
+from refectoredFunctions import reflect, refract, fresnel, normalize, EPS
+
+class EnvMap:
+    def __init__(self, path):
+        self.path = path
+        self.pixels = None
+        self.width = 0
+        self.height = 0
+        self.load_hdr()
+    
+    def load_hdr(self):
+        try:
+            import imageio.v3 as iio
+            img = iio.imread(self.path)
+            if img is not None:
+                self.pixels = img.astype(np.float32)
+                self.height, self.width = self.pixels.shape[:2]
+                if len(self.pixels.shape) == 2:
+                    self.pixels = np.stack([self.pixels] * 3, axis=-1)
+                print(f"HDR cargado: {self.width}x{self.height}")
+            else:
+                self.create_default_env()
+        except Exception as e:
+            print(f"Error cargando HDR: {e}")
+            self.create_default_env()
+    
+    def create_default_env(self):
+        self.width = 512
+        self.height = 256
+        self.pixels = np.zeros((self.height, self.width, 3), dtype=np.float32)
+        for y in range(self.height):
+            for x in range(self.width):
+                t = y / self.height
+                self.pixels[y, x] = [0.5 + 0.5*t, 0.7 + 0.3*t, 1.0]
+    
+    def get_color(self, u, v):
+        if self.pixels is None:
+            return [0.5, 0.7, 1.0]
+            
+        u = u % 1.0
+        v = max(0, min(1, v))
+        
+        x = u * (self.width - 1)
+        y = v * (self.height - 1)
+        
+        x0, x1 = int(x), min(int(x) + 1, self.width - 1)
+        y0, y1 = int(y), min(int(y) + 1, self.height - 1)
+        
+        fx = x - x0
+        fy = y - y0
+        
+        c00 = self.pixels[y0, x0]
+        c01 = self.pixels[y0, x1]
+        c10 = self.pixels[y1, x0]
+        c11 = self.pixels[y1, x1]
+        
+        color = (c00 * (1 - fx) * (1 - fy) +
+                c01 * fx * (1 - fy) +
+                c10 * (1 - fx) * fy +
+                c11 * fx * fy)
+        
+        exposure = 0.005
+        color = color * exposure
+        color = color / (1 + color)
+        
+        gamma = 1.0 / 2.2
+        color = np.power(np.maximum(color, 0), gamma)
+        
+        return [min(1, max(0, float(c))) for c in color]
 
 class Raytracer:
     def __init__(self, width=800, height=600):
@@ -19,6 +87,17 @@ class Raytracer:
         self.current_color = [1, 1, 1]
         self.ambient_light = [0.1, 0.1, 0.1]
         self.max_recursions = 5
+        self.envMap = None
+        
+    def get_env_color(self, direction):
+        if self.envMap:
+            direction = direction / np.linalg.norm(direction)
+            
+            u = (atan2(direction[0], -direction[2]) + pi) / (2 * pi)
+            v = (asin(max(-1, min(1, direction[1]))) + pi/2) / pi
+            
+            return self.envMap.get_color(u, v)
+        return self.clear_color
         
     def glClearColor(self, r, g, b):
         self.clear_color = [r, g, b]
@@ -28,7 +107,7 @@ class Raytracer:
         
     def cast_ray(self, origin, direction, recursion=0):
         if recursion >= self.max_recursions:
-            return [0, 0, 0]
+            return self.get_env_color(direction)
             
         min_distance = float('inf')
         hit = None
@@ -40,38 +119,54 @@ class Raytracer:
                 hit = intersect
                 
         if not hit:
-            return self.clear_color
+            return self.get_env_color(direction)
             
         material = hit['material']
         point = hit['point']
-        normal = hit['normal']
+        normal = normalize(hit['normal'])
+        direction = normalize(direction)
+        
+        is_outside = np.dot(direction, normal) < 0
+        bias = normal * EPS if is_outside else -normal * EPS
         
         if material.matType == "REFLECTIVE":
             reflect_dir = reflect(direction, normal)
-            reflect_origin = point + normal * 0.001
+            reflect_origin = point + bias
             reflect_color = self.cast_ray(reflect_origin, reflect_dir, recursion + 1)
-            return reflect_color
+            
+            tint = np.array(material.diffuse)
+            final_color = np.array(reflect_color) * tint
+            
+            base_lighting = np.array(self.phong_lighting(hit, direction))
+            final_color = final_color * 0.95 + base_lighting * 0.05
+            
+            return [min(1, max(0, c)) for c in final_color]
             
         elif material.matType == "TRANSPARENT":
-            kr = fresnel(direction, normal, 1.0, material.ior)
-            
-            color = [0, 0, 0]
-            
+            n1 = 1.0
+            n2 = material.ior
+            kr = fresnel(direction, normal, n1, n2)
+
+            color = np.array([0.0, 0.0, 0.0])
             if kr < 1:
-                refract_dir = refract(direction, normal, 1.0, material.ior)
+                refract_dir = refract(direction, normal, n1, n2)
                 if refract_dir is not None:
-                    refract_origin = point - normal * 0.001
-                    refract_color = self.cast_ray(refract_origin, refract_dir, recursion + 1)
-                    for i in range(3):
-                        color[i] += (1 - kr) * refract_color[i]
-            
+                    refract_origin = point - bias
+                    refract_color = np.array(self.cast_ray(refract_origin, refract_dir, recursion + 1))
+                    
+                    tint = np.array(material.diffuse)
+                    tint = tint * 0.3 + 0.7
+                    color += (1 - kr) * refract_color * tint
+
             reflect_dir = reflect(direction, normal)
-            reflect_origin = point + normal * 0.001
-            reflect_color = self.cast_ray(reflect_origin, reflect_dir, recursion + 1)
-            for i in range(3):
-                color[i] += kr * reflect_color[i]
+            reflect_origin = point + bias
+            reflect_color = np.array(self.cast_ray(reflect_origin, reflect_dir, recursion + 1))
+            color += kr * reflect_color
+            
+            base_lighting = np.array(self.phong_lighting(hit, direction))
+            color = color * 0.95 + base_lighting * 0.05
                 
-            return color
+            return [min(1, max(0, c)) for c in color]
             
         else:
             return self.phong_lighting(hit, direction)
@@ -91,8 +186,10 @@ class Raytracer:
     def cast_shadow_ray(self, origin, direction, max_distance):
         for obj in self.scene:
             intersect = obj.ray_intersect(origin, direction)
-            if intersect and 0.001 < intersect['distance'] < max_distance:
-                return True
+            if intersect:
+                d = intersect['distance']
+                if d > EPS and d < max_distance:
+                    return True
         return False
     
     def phong_lighting(self, hit, ray_direction):
@@ -102,15 +199,16 @@ class Raytracer:
         
         final_color = [0, 0, 0]
         
+        ambient_factor = 2.0 if material.matType == "REFLECTIVE" else 1.0
         for i in range(3):
-            final_color[i] += self.ambient_light[i] * material.diffuse[i]
+            final_color[i] += self.ambient_light[i] * material.diffuse[i] * ambient_factor
         
         for light in self.lights:
             if light.lightType == "Directional":
                 light_dir = np.array([-x for x in light.direction])
                 light_dir = light_dir / np.linalg.norm(light_dir)
                 
-                shadow_origin = point + normal * 0.001
+                shadow_origin = point + normal * EPS
                 in_shadow = self.cast_shadow_ray(shadow_origin, light_dir, float('inf'))
                 
                 if not in_shadow:
@@ -122,7 +220,7 @@ class Raytracer:
                                          light.color[i] * 
                                          light.intensity)
                     
-                    if material.ks > 0 and diffuse_intensity > 0:
+                    if material.ks > 0:
                         view_dir = np.array([-x for x in ray_direction])
                         view_dir = view_dir / np.linalg.norm(view_dir)
                         
@@ -145,11 +243,16 @@ class Raytracer:
         
         print(f"Renderizando imagen {self.width}x{self.height}...")
         
+        fov = 60
+        aspect_ratio = self.width / self.height
+        fov_radians = fov * pi / 180
+        scale = tan(fov_radians / 2)
+        
         for y in range(self.height):
             row = []
             for x in range(self.width):
-                px = (x + 0.5) / self.width * 2 - 1
-                py = (y + 0.5) / self.height * 2 - 1
+                px = (2 * (x + 0.5) / self.width - 1) * aspect_ratio * scale
+                py = (1 - 2 * (y + 0.5) / self.height) * scale
                 
                 direction = np.array([px, py, -1])
                 direction = direction / np.linalg.norm(direction)
@@ -204,14 +307,19 @@ class Raytracer:
                     if event.key == pygame.K_ESCAPE:
                         running = False
             
-            for _ in range(100):
+            fov = 60
+            aspect_ratio = self.width / self.height
+            fov_radians = fov * pi / 180
+            scale = tan(fov_radians / 2)
+            
+            for _ in range(200):
                 if rendered_pixels >= total_pixels:
                     break
                     
                 x, y = indices[rendered_pixels]
                 
-                px = (x + 0.5) / self.width * 2 - 1
-                py = (y + 0.5) / self.height * 2 - 1
+                px = (2 * (x + 0.5) / self.width - 1) * aspect_ratio * scale
+                py = (1 - 2 * (y + 0.5) / self.height) * scale
                 
                 direction = np.array([px, py, -1])
                 direction = direction / np.linalg.norm(direction)
@@ -242,43 +350,36 @@ class Raytracer:
         pygame.quit()
 
 if __name__ == "__main__":
-    raytracer = Raytracer(600, 600)
+    raytracer = Raytracer(800, 600)
     
+    raytracer.envMap = EnvMap("assets/viale_giuseppe_garibaldi_4k.hdr")
     raytracer.glClearColor(0.1, 0.3, 0.5)
     
-    carbonMaterial = Material(diffuse=[0.15, 0.15, 0.15], spec=8, ks=0.2)
-    mickeyRedMaterial = Material(diffuse=[0.8, 0.1, 0.1], spec=64, ks=0.6)
-    shoeYellowMaterial = Material(diffuse=[1.0, 0.9, 0.2], spec=128, ks=0.8)
-    mirrorMaterial = Material(diffuse=[0.9, 0.9, 0.9], spec=128, ks=0.5, matType="REFLECTIVE")
-    glassMaterial = Material(diffuse=[0.9, 0.9, 0.9], spec=128, ks=0.1, matType="TRANSPARENT", ior=1.5)
+    redOpaque = Material(diffuse=[0.9, 0.2, 0.2], spec=32, ks=0.3, matType="OPAQUE")
+    greenOpaque = Material(diffuse=[0.2, 0.9, 0.2], spec=64, ks=0.4, matType="OPAQUE")
     
-    mmHead = Sphere([0, 0, -4], 1.0, carbonMaterial)
-    mmLeftEar = Sphere([-0.7, 0.7, -3.8], 0.5, mirrorMaterial)
-    mmRightEar = Sphere([0.7, 0.7, -3.8], 0.5, glassMaterial)
+    silverReflective = Material(diffuse=[0.95, 0.95, 0.95], spec=128, ks=0.8, matType="REFLECTIVE")
+    goldReflective = Material(diffuse=[1.0, 0.85, 0.3], spec=128, ks=0.8, matType="REFLECTIVE")
     
-    mmLeftEye = Sphere([-0.3, 0.2, -3.2], 0.15, mirrorMaterial)
-    mmRightEye = Sphere([0.3, 0.2, -3.2], 0.15, glassMaterial)
+    clearGlass = Material(diffuse=[0.95, 0.95, 0.95], spec=128, ks=0.1, matType="TRANSPARENT", ior=1.52)
+    coloredGlass = Material(diffuse=[0.7, 0.9, 0.95], spec=128, ks=0.1, matType="TRANSPARENT", ior=1.33)
     
-    mmSmile1 = Sphere([-0.3, -0.3, -3.2], 0.1, shoeYellowMaterial)
-    mmSmile2 = Sphere([-0.15, -0.4, -3.15], 0.08, glassMaterial)
-    mmSmile3 = Sphere([0, -0.45, -3.1], 0.08, mirrorMaterial)
-    mmSmile4 = Sphere([0.15, -0.4, -3.15], 0.08, glassMaterial)
-    mmSmile5 = Sphere([0.3, -0.3, -3.2], 0.1, shoeYellowMaterial)
+    sphere1 = Sphere([-2.5, 1.2, -4], 0.9, redOpaque)
+    sphere2 = Sphere([2.5, 1.2, -4], 0.9, greenOpaque)
     
-    mmNose = Sphere([0, -0.1, -3.1], 0.06, mickeyRedMaterial)
+    sphere3 = Sphere([-2.5, -1.2, -4], 0.9, silverReflective)
+    sphere4 = Sphere([2.5, -1.2, -4], 0.9, goldReflective)
     
-    floorMirror = Sphere([0, -5, -6], 4.0, mirrorMaterial)
-    glassOrb = Sphere([2, 0, -3], 0.8, glassMaterial)
+    sphere5 = Sphere([0, 1.2, -4], 0.9, clearGlass)
+    sphere6 = Sphere([0, -1.2, -4], 0.9, coloredGlass)
 
-    raytracer.scene = [mmHead, mmLeftEar, mmRightEar, mmLeftEye, mmRightEye, 
-                      mmSmile1, mmSmile2, mmSmile3, mmSmile4, mmSmile5, mmNose,
-                      floorMirror, glassOrb]
+    raytracer.scene = [sphere1, sphere2, sphere3, sphere4, sphere5, sphere6]
     raytracer.lights = [
-        DirectionalLight(color=[1, 1, 1], intensity=1.0, direction=[-1, -1, -1]),
-        DirectionalLight(color=[0.6, 0.6, 0.8], intensity=0.3, direction=[1, 0.5, -0.5])
+        DirectionalLight(color=[1, 1, 1], intensity=1.2, direction=[-1, -1, -1]),
+        DirectionalLight(color=[0.8, 0.8, 1.0], intensity=0.6, direction=[1, 0.5, -0.5])
     ]
     
     raytracer.render_pygame()
     
     print("\nBMP...")
-    raytracer.render_to_bmp("MouseAlwaysWins.bmp")
+    raytracer.render_to_bmp("RayTracedSpheres.bmp")
